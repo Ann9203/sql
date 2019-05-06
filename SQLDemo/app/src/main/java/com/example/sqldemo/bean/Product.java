@@ -10,7 +10,6 @@ import com.example.sqldemo.anontation.DataTable;
  * 描述:
  */
 
-@DataTable("tb_product")
 public class Product {
     public int  productId;
     public String productName;

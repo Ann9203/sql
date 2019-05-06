@@ -9,8 +9,10 @@ import com.example.sqldemo.anontation.DataFields;
 import com.example.sqldemo.anontation.DataTable;
 
 import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -33,7 +35,7 @@ public class BaseDAO<T> implements IBaseDAO<T> {
 
     private boolean isInit = false;  //是否初始化
 
-    public boolean init(SQLiteDatabase database, Class<T> entityClass) {
+    protected boolean init(SQLiteDatabase database, Class<T> entityClass) {
         this.entityClass = entityClass;
         this.sqlDatabase = database;
 
@@ -88,7 +90,7 @@ public class BaseDAO<T> implements IBaseDAO<T> {
                 } else {
                     fileName = field.getName();
                 }
-                if (columnName.endsWith(fileName)) {
+                if (columnName.equals(fileName)) {
                     columnField = field;
                     break;
                 }
@@ -121,14 +123,17 @@ public class BaseDAO<T> implements IBaseDAO<T> {
                 valueName = field.getName();
                 //判断字段类型
             }
+            if (valueName.equals("serialVersionUID")){
+                continue;
+            }
             if (type == String.class) {
                 //String类型
                 stringBuilder.append(valueName).append(" TEXT,");
-            } else if (type == Integer.class || type == int.class) {
+            } else if (type == Integer.class ) {
                 stringBuilder.append(valueName).append(" INTEGER,");
-            } else if (type == Double.class || type == double.class) {
+            } else if (type == Double.class ) {
                 stringBuilder.append(valueName).append(" DOUBLE,");
-            } else if (type == Long.class || type == long.class) {
+            } else if (type == Long.class ) {
                 stringBuilder.append(valueName).append(" BIGINT,");
             } else if (type == byte[].class) {
                 stringBuilder.append(valueName).append(" BLOB,");
@@ -150,8 +155,8 @@ public class BaseDAO<T> implements IBaseDAO<T> {
      * 插入语句经常用到 values 获取values
      * @return
      */
-    private HashMap<String, String> getValues(T entity){
-        HashMap<String, String>  map = new HashMap<>();
+    private Map<String, String> getValues(T entity){
+        Map<String, String>  map = new HashMap<>();
         Iterator<Field> fieldIterator = cacheMap.values().iterator();
         while (fieldIterator.hasNext()){
             Field field= fieldIterator.next();
@@ -176,7 +181,7 @@ public class BaseDAO<T> implements IBaseDAO<T> {
         return  map;
     }
 
-    public ContentValues getContentValue(HashMap<String, String> map){
+    public ContentValues getContentValue(Map<String, String> map){
         ContentValues contentValues = new ContentValues();
         Set<String> keys = map.keySet();
         Iterator<String> keyIterator = keys.iterator();
@@ -192,12 +197,148 @@ public class BaseDAO<T> implements IBaseDAO<T> {
 
     @Override
     public long insert(T entity) {
-        HashMap<String, String > value = getValues(entity);
+        Map<String, String > value = getValues(entity);
         ContentValues contentValues = getContentValue(value);
         long result = sqlDatabase.insert(tableName, null, contentValues);
         return result;
     }
 
+    /**
+     * 更新数据
+     * @param entity
+     * @param where
+     * @return
+     */
+    @Override
+    public long update(T entity, T where, boolean flag) {
+
+        Map<String, String> map = getValues(entity);
+        ContentValues contentValues = getContentValue(map);
+
+        Map<String, String > whereMap = getValues(where);
+        Condition condition = new Condition(whereMap, flag);
+        //封装 "name= ? and .."
+         int  result =   sqlDatabase.update(tableName, contentValues, condition.whereCause, condition.whereArgs);
+        return result;
+    }
+
+    private class Condition{
+        private String whereCause; //选择条件
+        private String[] whereArgs; //选择对应数值
+
+        /**
+         * 传入值
+         * @param map
+         */
+        public Condition(Map<String, String> map, boolean flag){
+            StringBuilder stringBuilder = new StringBuilder();
+            stringBuilder.append("1=1");
+           Set<String> keySet = map.keySet();
+           Iterator<String> keyIterator = keySet.iterator();
+            ArrayList list = new ArrayList();
+           while (keyIterator.hasNext()){
+               String key = keyIterator.next(); //"name"
+               String value = map.get(key); //"lixue"
+               if (!TextUtils.isEmpty(value)){
+                  stringBuilder.append(flag? " and " + key +" = ?" : " or "+key+" =?");
+                  list.add(value);
+               }
+           }
+           this.whereCause = stringBuilder.toString();
+          this.  whereArgs = (String[]) list.toArray(new String[list.size()]);
+        }
+    }
+
+    /**
+     * 删除数据
+     * @param where
+     * @return
+     */
+    @Override
+    public int delete(T where, boolean flag) {
+        Map<String, String> map = getValues(where);
+        Condition condition =  new Condition(map, flag);
+       int result =  sqlDatabase.delete(tableName, condition.whereCause, condition.whereArgs);
+        return result;
+    }
+
+    /**
+     * 查询数据
+     * @param where
+     * @return
+     */
+    @Override
+    public List<T> query(T where) {
+     return    query(where, null, null, null);
+    }
+
+    /**
+     * 查询数据
+     * @param where
+     * @param orderBy
+     * @param startIndex
+     * @param limit
+     * @return
+     */
+    @Override
+    public List<T> query(T where, String orderBy, Integer startIndex, Integer limit) {
+   //    sqLiteDatabase.query(tableName,null,"id=?",new String[],null,null,orderBy,"1,5");
+
+        Map map = getValues(where);
+        Condition condition = new Condition(map, true); //都需要flag值 省略
+        String limitStr = null;
+        if (startIndex != null && limit != null){
+            limitStr = startIndex +" , "+limit;
+        }
+        Cursor cursor = sqlDatabase.query(tableName,null, condition.whereCause, condition.whereArgs, null, null, orderBy, limitStr );
+        //解析cureor 返回List<T>
+        List<T> result = getResult(where,  cursor);
+        return result;
+    }
+
+    private List<T> getResult(T obj, Cursor cursor){
+
+        List<T> list = new ArrayList<>();
+        Object item = null;
+        while (cursor.moveToNext()){
+            try {
+                item = obj.getClass().newInstance();
+                Iterator iterator = cacheMap.entrySet().iterator();
+                while (iterator.hasNext()){
+                    Map.Entry entry = (Map.Entry) iterator.next();
+                    //获取列名
+                    String  columnName = (String) entry.getKey();
+                    int index = cursor.getColumnIndex(columnName);
+                    //然后以列名拿到游标的位置
+                    Field field = (Field) entry.getValue();
+                    Class type = field.getType();
+                    if (type== Integer.class){
+                        field.set(item, cursor.getInt(index));
+                    } else if (type == String.class){
+                        field.set(item, cursor.getString(index));
+                    } else if ( type == Double.class){
+                        field.set(item, cursor.getDouble(index));
+                    } else if (type == Long.class){
+                        field.set(item, cursor.getLong(index));
+                    } else if (type == byte[].class){
+                        field.set(item, cursor.getBlob(index));
+                    } else {
+                        //不支持
+                        continue;
+                    }
+                }
+            } catch (IllegalAccessException e) {
+                e.printStackTrace();
+            } catch (InstantiationException e) {
+                e.printStackTrace();
+            }
+            if (item != null){
+                list.add((T) item);
+            }
+        }
+
+        return list;
+    }
 
 
 }
